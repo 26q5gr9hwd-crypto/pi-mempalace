@@ -1687,13 +1687,19 @@ export class MemoryStore {
     const project = input.project || `diary-${input.agent_name.toLowerCase().replace(/\s+/g, "_")}`;
     const limit = Math.min(input.last_n || 10, 100);
 
+    // Select the newest N entries by timestamp DESC, then render in
+    // chronological (oldest-first) order for a human-friendly reading flow.
     const rows = this.db
       .prepare(
         `SELECT id, content, project, topic, source, timestamp
-         FROM memories
-         WHERE project = ? AND source = 'diary'
-         ORDER BY timestamp ASC
-         LIMIT ?`
+         FROM (
+           SELECT id, content, project, topic, source, timestamp
+           FROM memories
+           WHERE project = ? AND source = 'diary'
+           ORDER BY timestamp DESC
+           LIMIT ?
+         ) AS recent
+         ORDER BY timestamp ASC`
       )
       .all(project, limit) as MemoryRow[];
 
