@@ -1,6 +1,6 @@
 {
   "name": "pi-mempalace",
-  "version": "0.2.0-monday.3",
+  "version": "0.2.0-monday.4",
   "type": "module",
   "description": "Persistent agent memory for pi \u2014 raw verbatim storage with semantic search. Never lose context again.",
   "keywords": [

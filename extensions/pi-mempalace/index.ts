@@ -61,7 +61,7 @@ interface MemoryRuntime {
   projects: Record<string, number>;
   /** Whether the backend is available */
   backendAvailable: boolean;
-  /** Cached wake-up text (refreshed on session_start) */
+  /** Cached wake-up text (refreshed on session_start, session_tree, and session_compact) */
   wakeUpText: string | null;
   /** Current project context */
   currentProject: string;
@@ -320,6 +320,27 @@ export default function memoryExtension(pi: ExtensionAPI) {
   // State reconstruction
   // -----------------------------------------------------------------------
 
+  /**
+   * Regenerate the cached wake-up text from the memory store.
+   * Safe to call repeatedly - only re-reads from SQLite, does not re-inject.
+   * Idempotent: if disabled or backend unavailable, sets wakeUpText to null.
+   */
+  const refreshWakeUpText = (runtime: MemoryRuntime) => {
+    if (!runtime.config.wakeUpEnabled || !runtime.backendAvailable) {
+      runtime.wakeUpText = null;
+      return;
+    }
+    try {
+      const wakeup = runtime.store.wakeup({
+        project: runtime.currentProject,
+        max_tokens: runtime.config.wakeUpMaxTokens,
+      });
+      runtime.wakeUpText = wakeup.text || null;
+    } catch {
+      runtime.wakeUpText = null;
+    }
+  };
+
   const reconstructState = async (ctx: ExtensionContext) => {
     const runtime = getRuntime(ctx);
     runtime.config = loadConfig();
@@ -339,18 +360,8 @@ export default function memoryExtension(pi: ExtensionAPI) {
       runtime.projects = {};
     }
 
-    // Pre-generate wake-up text (no embedding needed — just reads from memory)
-    if (runtime.config.wakeUpEnabled && runtime.backendAvailable) {
-      try {
-        const wakeup = runtime.store.wakeup({
-          project: runtime.currentProject,
-          max_tokens: runtime.config.wakeUpMaxTokens,
-        });
-        runtime.wakeUpText = wakeup.text || null;
-      } catch {
-        runtime.wakeUpText = null;
-      }
-    }
+    // Pre-generate wake-up text (no embedding needed - just reads from memory)
+    refreshWakeUpText(runtime);
   };
 
   // -----------------------------------------------------------------------
@@ -363,6 +374,31 @@ export default function memoryExtension(pi: ExtensionAPI) {
 
   pi.on("session_tree", async (_e, ctx) => {
     await reconstructState(ctx);
+  });
+
+  // Post-compaction wake-up refresh.
+  // After pi compacts the session the previous assistant/user history is replaced by a
+  // compaction summary. Auto-captured memories stored during the session are persisted to
+  // SQLite but the injected wake-up text (L0 identity + L1 top memories) was captured at
+  // session_start / session_tree and is now stale. We refresh the cached wakeUpText here
+  // so the NEXT before_agent_start re-injects the freshest wake-up block into the system
+  // prompt. before_agent_start fires per user turn and always chains on top of
+  // event.systemPrompt, so a single cache refresh is idempotent and cannot cause duplicate
+  // injection or token-budget blowup.
+  pi.on("session_compact", async (_e, ctx) => {
+    const runtime = getRuntime(ctx);
+    if (!runtime.enabled) return;
+    // Refresh status cache too - counts may have grown via auto-capture during the session.
+    try {
+      if (runtime.backendAvailable) {
+        const status = runtime.store.status();
+        runtime.totalMemories = status.total_memories;
+        runtime.projects = status.projects;
+      }
+    } catch {
+      // Non-fatal - leave cached counts alone.
+    }
+    refreshWakeUpText(runtime);
   });
 
   pi.on("session_shutdown", async (_e, ctx) => {
