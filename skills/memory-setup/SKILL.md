@@ -17,13 +17,15 @@ The first operation that needs embeddings (search or store) will download the al
 
 ### 1. Create memory directory
 
+The agent's memory dir is resolved from `PI_CODING_AGENT_DIR` (if set) or `$HOME/.pi/agent` as a fallback. Use the resolver — never hardcode `~/.pi/agent/memory/`.
+
 ```bash
-mkdir -p ~/.pi/agent/memory
+mkdir -p "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/memory"
 ```
 
 ### 2. Configure identity
 
-Ask the user about themselves and write `~/.pi/agent/memory/identity.txt`. This is loaded into every session (~100 tokens). Keep it concise.
+Ask the user about themselves and write `identity.txt` to the agent's memory dir (resolved from `PI_CODING_AGENT_DIR` or `$HOME/.pi/agent/memory/` as fallback). Use the `memory_status` tool or the resolver path `"${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/memory/identity.txt"` — do not hardcode `~/.pi/agent/memory/identity.txt`. This is loaded into every session (~100 tokens). Keep it concise.
 
 Template:
 ```
@@ -78,7 +80,7 @@ Once set up, memory works automatically:
 
 ## Configuration
 
-Config is stored at `~/.pi/agent/memory/config.json`:
+Config is stored at `config.json` inside the agent's memory dir (resolved from `PI_CODING_AGENT_DIR` or `$HOME/.pi/agent/memory/` as fallback):
 
 ```json
 {

@@ -135,7 +135,9 @@ Following the [MemPalace](https://www.mempalace.tech) 4-layer memory stack:
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  L0: IDENTITY (~100 tokens)                             │
-│  Always loaded. ~/.pi/agent/memory/identity.txt         │
+│  Always loaded from the agent memory dir               │
+│  ($PI_CODING_AGENT_DIR/memory/identity.txt, or            │
+│   ~/.pi/agent/memory/identity.txt as fallback).         │
 ├─────────────────────────────────────────────────────────┤
 │  L1: ESSENTIAL STORY (~500-800 tokens)                  │
 │  Top 15 memories by importance + recency.               │
@@ -165,7 +167,7 @@ pi (TypeScript — everything in-process)
 │  │ Tools + Commands  │    │ Metadata indexes   │  │
 │  │ Stats TUI overlay │    │ WAL mode           │  │
 │  └──────────────────┘    │                    │  │
-│                           │ ~/.pi/agent/       │  │
+│                           │ $PI_CODING_AGENT_  │  │
 │                           │   memory/          │  │
 │                           │     memories.db    │  │
 │                           └────────────────────┘  │
@@ -194,7 +196,7 @@ Benchmarked on Apple Silicon (M-series). Your mileage may vary, but it'll be fas
 
 ### 💾 Storage
 
-Memories live in a SQLite database at `~/.pi/agent/memory/memories.db`, powered by [sqlite-vec](https://github.com/asg017/sqlite-vec) for vector similarity search. Metadata is indexed (project, topic, timestamp) for fast pre-filtering before vector search kicks in. Deduplication via SHA-256 hash means you can't accidentally remember the same thing twice — unlike that embarrassing story you keep retelling at parties.
+Memories live in a SQLite database at `memories.db` inside the agent memory dir (resolved from `PI_CODING_AGENT_DIR/memory/` or `~/.pi/agent/memory/` as fallback), powered by [sqlite-vec](https://github.com/asg017/sqlite-vec) for vector similarity search. Metadata is indexed (project, topic, timestamp) for fast pre-filtering before vector search kicks in. Deduplication via SHA-256 hash means you can't accidentally remember the same thing twice — unlike that embarrassing story you keep retelling at parties.
 
 > **Migrating from v0.1?** If you have an existing `memories.jsonl` file, it's automatically migrated to SQLite on first load. Your old file is renamed to `.bak`. No data lost, no action needed.
 
