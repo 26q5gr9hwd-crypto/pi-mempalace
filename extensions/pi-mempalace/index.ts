@@ -32,12 +32,9 @@ import { MemoryStore } from "./memory_store.js";
 // Constants
 // ---------------------------------------------------------------------------
 
-const MEMORY_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".pi",
-  "agent",
-  "memory"
-);
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
+  || path.join(process.env.HOME || process.env.USERPROFILE || "~", ".pi", "agent");
+const MEMORY_DIR = path.join(AGENT_DIR, "memory");
 const CONFIG_PATH = path.join(MEMORY_DIR, "config.json");
 
 // ---------------------------------------------------------------------------

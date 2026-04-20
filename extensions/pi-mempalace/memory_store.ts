@@ -33,12 +33,9 @@ import * as sqliteVec from "sqlite-vec";
 // Constants
 // ---------------------------------------------------------------------------
 
-const MEMORY_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".pi",
-  "agent",
-  "memory"
-);
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
+  || path.join(process.env.HOME || process.env.USERPROFILE || "~", ".pi", "agent");
+const MEMORY_DIR = path.join(AGENT_DIR, "memory");
 const MODEL_NAME = "Xenova/all-MiniLM-L6-v2";
 const EMBEDDING_DIM = 384;
 
