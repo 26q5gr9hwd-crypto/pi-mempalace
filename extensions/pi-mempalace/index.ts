@@ -50,6 +50,8 @@ interface MemoryConfig {
   wakeUpMaxTokens: number;
   /** Default project name (auto-detected from cwd if not set) */
   defaultProject: string | null;
+  /** Agent name — used to derive diary-<agent_name> for wake-up diary injection. Null = no diary section. */
+  agentName: string | null;
 }
 
 interface MemoryRuntime {
@@ -81,6 +83,7 @@ function defaultConfig(): MemoryConfig {
     wakeUpEnabled: true,
     wakeUpMaxTokens: 800,
     defaultProject: null,
+    agentName: process.env.PI_MEMPALACE_AGENT_NAME || null,
   };
 }
 
@@ -331,9 +334,14 @@ export default function memoryExtension(pi: ExtensionAPI) {
       return;
     }
     try {
+      const agentName = runtime.config.agentName || process.env.PI_MEMPALACE_AGENT_NAME || null;
+      const diaryProject = agentName
+        ? `diary-${agentName.toLowerCase().replace(/\s+/g, "_")}`
+        : undefined;
       const wakeup = runtime.store.wakeup({
         project: runtime.currentProject,
         max_tokens: runtime.config.wakeUpMaxTokens,
+        diary_project: diaryProject,
       });
       runtime.wakeUpText = wakeup.text || null;
     } catch {

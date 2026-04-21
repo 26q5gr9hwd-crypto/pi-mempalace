@@ -870,12 +870,13 @@ export class MemoryStore {
    * L1: Top 15 memories by importance + recency, grouped by project.
    *     Generated once per session and cached.
    */
-  wakeup(options?: { project?: string; max_tokens?: number }): WakeupResult {
+  wakeup(options?: { project?: string; max_tokens?: number; diary_project?: string }): WakeupResult {
     this.ensureLoaded();
 
     const project = options?.project || null;
     const maxTokens = options?.max_tokens || 800;
     const maxChars = maxTokens * 4;
+    const diaryProject = options?.diary_project || null;
     const parts: string[] = [];
 
     // L0: Identity
@@ -894,8 +895,99 @@ export class MemoryStore {
     }
     parts.push(this.cachedL1);
 
+    // Recent Activity (diary) — mid-term memory across sessions / post-compaction.
+    // Budgeted separately from L1; never exceeds ~800 tokens.
+    if (diaryProject) {
+      const diarySection = this.generateDiarySection(diaryProject);
+      if (diarySection) {
+        parts.push(diarySection);
+      }
+    }
+
     const text = parts.join("\n");
     return { text, token_estimate: Math.ceil(text.length / 4) };
+  }
+
+  /**
+   * Build the injected "Recent Activity (diary)" section for wake-up.
+   *
+   * Policy:
+   *   - default: newest 5 diary entries (chronological render)
+   *   - sparse catch-up: if total ~tokens < 200, backfill to newest 10
+   *   - hard cap: ~800 tokens total
+   *   - return empty string if no entries (section is omitted)
+   *
+   * Token estimate uses the same chars/4 heuristic as the rest of wakeup.
+   */
+  private generateDiarySection(diaryProject: string): string {
+    const SPARSE_THRESHOLD_TOKENS = 200;
+    const HARD_CAP_TOKENS = 800;
+    const HARD_CAP_CHARS = HARD_CAP_TOKENS * 4; // ~3200
+
+    const fetchNewest = (n: number): MemoryRow[] => {
+      // Newest N by timestamp DESC, then render chronologically (oldest-first).
+      return this.db
+        .prepare(
+          `SELECT id, content, project, topic, source, timestamp
+           FROM (
+             SELECT id, content, project, topic, source, timestamp
+             FROM memories
+             WHERE project = ? AND source = 'diary'
+             ORDER BY timestamp DESC
+             LIMIT ?
+           ) AS recent
+           ORDER BY timestamp ASC`
+        )
+        .all(diaryProject, n) as MemoryRow[];
+    };
+
+    const formatRows = (rows: MemoryRow[]): string => {
+      if (rows.length === 0) return "";
+      const lines: string[] = ["\n## Recent Activity (diary)"];
+      for (const row of rows) {
+        const ts = (row.timestamp || "").slice(0, 16).replace("T", " ");
+        let snippet = (row.content || "").trim().replace(/\s+/g, " ");
+        if (snippet.length > 240) snippet = snippet.slice(0, 237) + "...";
+        const topic = row.topic && row.topic !== "diary" ? ` [${row.topic}]` : "";
+        lines.push(`- ${ts}${topic} — ${snippet}`);
+      }
+      return lines.join("\n");
+    };
+
+    const trimToCap = (text: string): string => {
+      if (text.length <= HARD_CAP_CHARS) return text;
+      // Trim whole trailing entries (lines starting with "- ") until under cap.
+      const lines = text.split("\n");
+      while (lines.length > 1 && lines.join("\n").length > HARD_CAP_CHARS) {
+        // drop the last entry line
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (lines[i].startsWith("- ")) {
+            lines.splice(i, 1);
+            break;
+          }
+          // fallback: force a hard slice if no entry lines left
+          if (i === 0) {
+            return lines.join("\n").slice(0, HARD_CAP_CHARS - 3) + "...";
+          }
+        }
+      }
+      let out = lines.join("\n");
+      if (out.length > HARD_CAP_CHARS) out = out.slice(0, HARD_CAP_CHARS - 3) + "...";
+      return out;
+    };
+
+    let rows = fetchNewest(5);
+    if (rows.length === 0) return "";
+    let section = formatRows(rows);
+    const tokens = Math.ceil(section.length / 4);
+    if (tokens < SPARSE_THRESHOLD_TOKENS) {
+      const more = fetchNewest(10);
+      if (more.length > rows.length) {
+        rows = more;
+        section = formatRows(rows);
+      }
+    }
+    return trimToCap(section);
   }
 
   /**
