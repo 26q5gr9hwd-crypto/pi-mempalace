@@ -63,7 +63,7 @@ interface MemoryRuntime {
   projects: Record<string, number>;
   /** Whether the backend is available */
   backendAvailable: boolean;
-  /** Cached wake-up text (refreshed on session_start, session_tree, and session_compact) */
+  /** Cached wake-up text (refreshed on session_start, session_tree, session_compact, and before_agent_start) */
   wakeUpText: string | null;
   /** Current project context */
   currentProject: string;
@@ -473,6 +473,21 @@ export default function memoryExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const runtime = getRuntime(ctx);
     if (!runtime.enabled || !runtime.config.wakeUpEnabled) return;
+
+    // Always refresh wakeUpText immediately before injection.
+    // This guarantees that after ANY compaction path (manual /vcc, /pi-vcc, /compact, or
+    // automatic threshold-triggered compaction) the NEXT user turn sees the freshest
+    // wake-up block, including the ## Recent Activity (diary) section. We cannot rely
+    // solely on session_compact cache refresh because:
+    //   - Different compaction callers may not emit session_compact at the expected time.
+    //   - A running pi process may hold a pre-L2-11 runtime for which session_compact
+    //     never passed diary_project.
+    //   - Any lifecycle step that rebuilds the session after compaction could invalidate
+    //     an eagerly-computed cache before before_agent_start fires.
+    // refreshWakeUpText is a cheap SQLite read and the injection below is idempotent
+    // (single append to event.systemPrompt per turn), so doing this every turn is safe.
+    refreshWakeUpText(runtime);
+
     if (!runtime.wakeUpText) return;
 
     const extra =
