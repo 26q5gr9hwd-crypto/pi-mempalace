@@ -36,6 +36,8 @@ const AGENT_DIR = process.env.PI_CODING_AGENT_DIR
   || path.join(process.env.HOME || process.env.USERPROFILE || "~", ".pi", "agent");
 const MEMORY_DIR = path.join(AGENT_DIR, "memory");
 const CONFIG_PATH = path.join(MEMORY_DIR, "config.json");
+const TRACE_PATH = path.join(MEMORY_DIR, "wakeup-trace.log");
+const TRACE_MAX_LINES = 200;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,6 +130,34 @@ function detectProject(cwd: string): string {
     return path.basename(cwd);
   }
   return path.basename(cwd) || "general";
+}
+
+/**
+ * Append a bounded JSONL trace entry to the wake-up trace log.
+ *
+ * Diagnostics for L2-13: capture what refreshWakeUpText /
+ * before_agent_start / session_compact observe at runtime post-compaction.
+ * Best-effort - never throws. Rotates when the file exceeds TRACE_MAX_LINES
+ * by rewriting with the last TRACE_MAX_LINES lines.
+ */
+function writeTrace(entry: Record<string, unknown>): void {
+  try {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + "\n";
+    fs.appendFileSync(TRACE_PATH, line);
+    try {
+      const content = fs.readFileSync(TRACE_PATH, "utf-8");
+      const lines = content.split("\n").filter((l) => l.length > 0);
+      if (lines.length > TRACE_MAX_LINES) {
+        const kept = lines.slice(-TRACE_MAX_LINES).join("\n") + "\n";
+        fs.writeFileSync(TRACE_PATH, kept);
+      }
+    } catch {
+      // rotation is best-effort
+    }
+  } catch {
+    // trace logging must never break the extension
+  }
 }
 
 /**
@@ -331,11 +361,24 @@ export default function memoryExtension(pi: ExtensionAPI) {
   const refreshWakeUpText = (runtime: MemoryRuntime) => {
     if (!runtime.config.wakeUpEnabled || !runtime.backendAvailable) {
       runtime.wakeUpText = null;
+      writeTrace({
+        phase: "refresh",
+        agentName: runtime.config.agentName || null,
+        diaryProject: null,
+        backendAvailable: runtime.backendAvailable,
+        currentProject: runtime.currentProject,
+        wakeUpEnabled: runtime.config.wakeUpEnabled,
+        wakeUpTextLen: 0,
+        hasDiaryHeader: false,
+        earlyReturn: true,
+      });
       return;
     }
+    let agentName: string | null = null;
+    let diaryProject: string | undefined;
     try {
-      const agentName = runtime.config.agentName || process.env.PI_MEMPALACE_AGENT_NAME || null;
-      const diaryProject = agentName
+      agentName = runtime.config.agentName || process.env.PI_MEMPALACE_AGENT_NAME || null;
+      diaryProject = agentName
         ? `diary-${agentName.toLowerCase().replace(/\s+/g, "_")}`
         : undefined;
       const wakeup = runtime.store.wakeup({
@@ -344,8 +387,32 @@ export default function memoryExtension(pi: ExtensionAPI) {
         diary_project: diaryProject,
       });
       runtime.wakeUpText = wakeup.text || null;
-    } catch {
+      writeTrace({
+        phase: "refresh",
+        agentName,
+        diaryProject: diaryProject ?? null,
+        backendAvailable: runtime.backendAvailable,
+        currentProject: runtime.currentProject,
+        wakeUpEnabled: runtime.config.wakeUpEnabled,
+        wakeUpTextLen: runtime.wakeUpText ? runtime.wakeUpText.length : 0,
+        hasDiaryHeader: runtime.wakeUpText
+          ? runtime.wakeUpText.includes("## Recent Activity (diary)")
+          : false,
+      });
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
       runtime.wakeUpText = null;
+      writeTrace({
+        phase: "refresh",
+        agentName,
+        diaryProject: diaryProject ?? null,
+        backendAvailable: runtime.backendAvailable,
+        currentProject: runtime.currentProject,
+        wakeUpEnabled: runtime.config.wakeUpEnabled,
+        wakeUpTextLen: 0,
+        hasDiaryHeader: false,
+        error: errMsg,
+      });
     }
   };
 
@@ -396,6 +463,15 @@ export default function memoryExtension(pi: ExtensionAPI) {
   pi.on("session_compact", async (_e, ctx) => {
     const runtime = getRuntime(ctx);
     if (!runtime.enabled) return;
+    writeTrace({
+      phase: "session_compact",
+      sessionId: getSessionKey(ctx),
+      runtimePreExists: runtime.backendAvailable || runtime.totalMemories > 0,
+      agentName: runtime.config.agentName || null,
+      backendAvailable: runtime.backendAvailable,
+      totalMemories: runtime.totalMemories,
+      wakeUpEnabled: runtime.config.wakeUpEnabled,
+    });
     // Refresh status cache too - counts may have grown via auto-capture during the session.
     try {
       if (runtime.backendAvailable) {
@@ -473,6 +549,16 @@ export default function memoryExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const runtime = getRuntime(ctx);
     if (!runtime.enabled || !runtime.config.wakeUpEnabled) return;
+
+    writeTrace({
+      phase: "before_agent_start",
+      sessionId: getSessionKey(ctx),
+      runtimePreExists: runtime.backendAvailable || runtime.totalMemories > 0,
+      agentName: runtime.config.agentName || null,
+      backendAvailable: runtime.backendAvailable,
+      totalMemories: runtime.totalMemories,
+      wakeUpEnabled: runtime.config.wakeUpEnabled,
+    });
 
     // Always refresh wakeUpText immediately before injection.
     // This guarantees that after ANY compaction path (manual /vcc, /pi-vcc, /compact, or
