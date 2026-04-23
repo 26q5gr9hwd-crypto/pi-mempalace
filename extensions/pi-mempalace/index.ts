@@ -27,6 +27,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { MemoryStore } from "./memory_store.js";
+import {
+  scoreAutoCapture,
+  pickTopic,
+  isRecentDuplicate,
+} from "./auto_capture_helpers.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -525,14 +530,20 @@ export default function memoryExtension(pi: ExtensionAPI) {
       ? exchange.slice(0, 2000) + "\n[truncated]"
       : exchange;
 
+    // MONDAY-L2-15: suppress near-duplicate captures within 60s per session.
+    const sessionKey = getSessionKey(ctx);
+    if (isRecentDuplicate(sessionKey, content)) return;
+
     try {
+      // MONDAY-L2-15: adaptive topic + importance, replacing hard-coded defaults.
       const result = await runtime.store.store({
         content,
         project: runtime.currentProject,
-        topic: "general",
+        topic: pickTopic(content),
         source: "auto-capture",
         timestamp: new Date().toISOString(),
-        session_id: getSessionKey(ctx),
+        session_id: sessionKey,
+        importance: scoreAutoCapture(content),
       });
 
       if (result.status === "stored") {
