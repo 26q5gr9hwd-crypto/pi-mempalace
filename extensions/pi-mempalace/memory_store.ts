@@ -379,6 +379,7 @@ export class MemoryStore {
   private stmtDeleteVec: any = null;
   private stmtCountAll: any = null;
   private stmtHasId: any = null;
+  private stmtFindRecentAutoCaptureDup: any = null;  // MONDAY-L2-15
 
   constructor(memoryDir: string = MEMORY_DIR) {
     this.memoryDir = memoryDir;
@@ -531,6 +532,18 @@ export class MemoryStore {
       `SELECT 1 FROM memories WHERE id = ? LIMIT 1`
     );
 
+    // MONDAY-L2-15: near-duplicate suppression for auto-capture. Checks for
+    // a row in the same session whose first 100 chars match the incoming
+    // content and whose timestamp is within the last 60 seconds.
+    this.stmtFindRecentAutoCaptureDup = this.db.prepare(
+      `SELECT 1 FROM memories
+         WHERE source = 'auto-capture'
+           AND session_id = ?
+           AND substr(content, 1, 100) = ?
+           AND timestamp > ?
+         LIMIT 1`
+    );
+
     // Run migration from JSONL if old file exists and DB is empty
     if (fs.existsSync(this.storePath) && this.countAll() === 0) {
       this.migrateFromJsonl();
@@ -542,6 +555,20 @@ export class MemoryStore {
   /** Ensure the store is loaded. */
   private ensureLoaded(): void {
     if (!this.loaded) this.load();
+  }
+
+  /**
+   * MONDAY-L2-15: Returns true if an auto-capture row already exists for
+   * the same session within the last 60 seconds whose first 100 chars of
+   * content match the given content.
+   */
+  hasRecentAutoCaptureDuplicate(sessionId: string, content: string): boolean {
+    this.ensureLoaded();
+    if (!sessionId) return false;
+    const prefix = content.slice(0, 100);
+    const cutoff = new Date(Date.now() - 60_000).toISOString();
+    const row = this.stmtFindRecentAutoCaptureDup.get(sessionId, prefix, cutoff);
+    return !!row;
   }
 
   // -----------------------------------------------------------------------

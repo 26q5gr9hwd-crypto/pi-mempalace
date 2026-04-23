@@ -531,8 +531,14 @@ export default function memoryExtension(pi: ExtensionAPI) {
       : exchange;
 
     // MONDAY-L2-15: suppress near-duplicate captures within 60s per session.
+    // Two-layer check: in-memory (fast, same-process) + DB (authoritative, cross-process).
     const sessionKey = getSessionKey(ctx);
     if (isRecentDuplicate(sessionKey, content)) return;
+    try {
+      if (runtime.store.hasRecentAutoCaptureDuplicate(sessionKey, content)) return;
+    } catch {
+      // If DB dedupe check fails, fall through to insert — in-memory already checked.
+    }
 
     try {
       // MONDAY-L2-15: adaptive topic + importance, replacing hard-coded defaults.
